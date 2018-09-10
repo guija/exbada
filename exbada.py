@@ -30,23 +30,33 @@ class DotWriter:
             for connection in analyzer.connections:
                 file.write("\t%s -> %s;\n" % connection)
 
-            file.write("}\n")        
+            file.write("}\n")
 
 class Analyzer:
     
-    def __init__(self):
+    def __init__(self, data=True, programs=True, interfaces=True):
         self.data_elemets = set()
         self.programs = set()
         self.interfaces = set()
         self.connections = [] # list of tuples meaning edges between interfaces programs etc.
         self.node_attributes = {} # dictionary with nodes names (eg. program, interface or data_element) keys and lists as values
+        self.analyze_data = data
+        self.analyze_programs = programs
+        self.analyze_interfaces = interfaces
 
     def analyze(self, file_path, content):
+
         # TODO replace with logging
         print("Analyzing %s" % file_path)
-        self.extractProgramDependencies(file_path, content)
-        self.extractDataDependencies(file_path, content)
-        self.extractInterfaceDependiencies(file_path, content)
+        
+        if self.analyze_programs:
+            self.extractProgramDependencies(file_path, content)
+
+        if self.analyze_data:
+            self.extractDataDependencies(file_path, content)
+        
+        if self.analyze_interfaces:
+            self.extractInterfaceDependiencies(file_path, content)
 
     def get_program_name(self, file_path, content):
         return os.path.basename(file_path)
@@ -66,17 +76,28 @@ class Pl1Analyzer(Analyzer):
 
 class CobolAnalyzer(Analyzer):
     
-    helper_programs = {}
+    helper_programs = set()
 
-    technical_data_fields = {}
+    technical_data_fields = set()
+
+    def is_auswertung(self, file_path, content):
+        program_name = self.get_program_name(file_path, content)
+        return program_name.startswith("B1A") or program_name.startswith("B1D") or program_name.startswith("B1L")
 
     def get_program_name(self, file_path, content):
         return os.path.basename(file_path).replace(".cbl", "")
 
     def extractDataDependencies(self, file_path, content):
 
+        if self.is_auswertung(file_path, content):
+            return
+
         caller_name = self.get_program_name(file_path, content)
-        matches = re.finditer(r'(\w+-\w+-\w+)', content)
+
+        if caller_name in CobolAnalyzer.helper_programs:
+            return
+
+        matches = re.finditer(r'((PA|BA)-\w+-\w+)', content)
 
         for match in matches:
 
@@ -93,9 +114,18 @@ class CobolAnalyzer(Analyzer):
 
     def extractProgramDependencies(self, file_path, content):
 
+        if self.is_auswertung(file_path, content):
+            return
+
         caller_name = self.get_program_name(file_path, content)
+
+        print(caller_name)
+
+        if caller_name in CobolAnalyzer.helper_programs:
+            return
+
         self.programs.add(caller_name)
-        matches = re.finditer(r'CALL\s+(\w+)', content)
+        matches = re.finditer(r'WXX-(\w+)', content)
 
         for match in matches:
 
@@ -108,7 +138,13 @@ class CobolAnalyzer(Analyzer):
             self.connections.append((caller_name, callee_name))
 
     def extractInterfaceDependiencies(self, file_path, content):
-        pass
+        
+        # TODO
+
+        if self.is_auswertung(file_path, content):
+            return
+
+        return
 
 def remove_file_if_exists(file_path):
     if os.path.exists(file_path):
@@ -118,12 +154,15 @@ def main():
 
     argument_parser = argparse.ArgumentParser()
     argument_parser.add_argument("folder_paths", nargs='+', help="Input folders with sources", type=str)
+    argument_parser.add_argument("--interfaces", action="store_true", help="Analyze interfaces")
+    argument_parser.add_argument("--data", action="store_true", help="Analyze data")
+    argument_parser.add_argument("--programs", action="store_true", help="Analyze programs")
     argument_parser.add_argument("--dot", required=True, help="Dot output file name", type=str)
     args = argument_parser.parse_args()
 
     remove_file_if_exists(args.dot)
 
-    analyzer = CobolAnalyzer()
+    analyzer = CobolAnalyzer(data=args.data, programs=args.programs, interfaces=args.interfaces)
 
     # todo recursive or multiple input?
 
